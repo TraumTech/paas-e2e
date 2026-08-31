@@ -1,0 +1,27 @@
+name: e2e
+
+on:
+  schedule:
+    # Ежедневно в 06:00 UTC — до начала рабочего дня, чтобы поломку,
+    # приехавшую вчерашними выкатками, было видно с утра.
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    # Прогон не должен висеть: платформа либо ответила, либо это авария.
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version: stable
+      - run: go vet ./...
+      # Токен принадлежит проверкам, а не сервису: отзыв не задевает выкатки.
+      - name: Сквозные проверки платформы
+        env:
+          PAAS_API_TOKEN: ${{ secrets.PAAS_API_TOKEN }}
+        run: go test -v -timeout 12m ./...
