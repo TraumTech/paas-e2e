@@ -1,0 +1,64 @@
+name: e2e-cluster
+
+# Прогон со свежим кластером: поднимаем одноузловой кластер под этот запуск,
+# гоняем сценарии, которым нужен настоящий кластер, и сносим его целиком.
+# Уборка получается бесплатной и надёжной — платформа снимать выкатку пока не
+# умеет, а тут вместе с машиной исчезает всё, что она успела туда положить.
+
+on:
+  schedule:
+    # На час раньше неразрушающего прогона: если кластерный путь сломан,
+    # к утру это уже видно.
+    - cron: '0 5 * * *'
+  workflow_dispatch:
+
+# Адрес и корневой сертификат у кластера одни на все прогоны, поэтому два
+# одновременных запуска подрались бы за них.
+concurrency:
+  group: e2e-cluster
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      E2E_CLUSTER_HOST: ${{ secrets.E2E_CLUSTER_HOST }}
+      E2E_CLUSTER_IP: ${{ secrets.E2E_CLUSTER_IP }}
+      E2E_CA_CRT: ${{ secrets.E2E_CA_CRT }}
+      E2E_CA_KEY: ${{ secrets.E2E_CA_KEY }}
+      E2E_PLATFORM_TOKEN: ${{ secrets.E2E_PLATFORM_TOKEN }}
+      E2E_ADMIN_TOKEN: ${{ secrets.E2E_ADMIN_TOKEN }}
+      E2E_SUBNET: ${{ secrets.E2E_SUBNET }}
+      E2E_CLUSTER_NAME: ${{ vars.E2E_CLUSTER_NAME || 'paas-e2e' }}
+      PAAS_API_TOKEN: ${{ secrets.PAAS_SANDBOX_API_TOKEN }}
+      KUBECONFIG_OUT: ${{ github.workspace }}/.e2e-kubeconfig
+
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version: stable
+
+      - name: Установить и настроить yc
+        run: |
+          curl -sSL https://storage.yandexcloud.net/yandexcloud-yc/install.sh \
+            | bash -s -- -i "$HOME/yandex-cloud" -n
+          echo "$HOME/yandex-cloud/bin" >> "$GITHUB_PATH"
+          printf '%s' '${{ secrets.YC_SA_KEY }}' > "$HOME/yc-key.json"
+          "$HOME/yandex-cloud/bin/yc" config profile create ci
+          "$HOME/yandex-cloud/bin/yc" config set service-account-key "$HOME/yc-key.json"
+          "$HOME/yandex-cloud/bin/yc" config set cloud-id '${{ secrets.YC_CLOUD_ID }}'
+          "$HOME/yandex-cloud/bin/yc" config set folder-id '${{ secrets.YC_FOLDER_ID }}'
+
+      - name: Поднять кластер прогона
+        run: hack/cluster-up.sh
+
+      - name: Сценарии, которым нужен кластер
+        run: go test -v -tags cluster -timeout 25m ./...
+
+      # Снос обязан случиться и после падения: иначе машина останется работать,
+      # а следующий прогон встанет на занятом адресе.
+      - name: Снести кластер прогона
+        if: always()
+        run: hack/cluster-down.sh

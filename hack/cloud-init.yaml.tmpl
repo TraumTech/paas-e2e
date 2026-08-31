@@ -1,0 +1,34 @@
+#cloud-config
+# Свежий одноузловой кластер под один прогон проверок. Живёт минуты, поэтому
+# ничего не переживает перезагрузку и ничего не бэкапится.
+write_files:
+  # Учётные записи API-сервера статическим файлом: только так у каждого нового
+  # кластера остаются ТЕ ЖЕ токены, что записаны у платформы. Иначе после
+  # пересоздания пришлось бы заводить на платформе новое подключение — а
+  # отзывать старые она пока не умеет.
+  - path: /etc/rancher/k3s/platform-tokens.csv
+    permissions: '0600'
+    content: |
+      __PLATFORM_TOKEN__,paas-platform,paas-platform
+      __ADMIN_TOKEN__,e2e-admin,e2e-admin,"system:masters"
+
+  # Тот же корневой сертификат, что и у прошлых кластеров: платформа хранит его
+  # в подключении и проверяет им сервер.
+  - path: /var/lib/rancher/k3s/server/tls/server-ca.crt
+    permissions: '0644'
+    encoding: b64
+    content: __CA_CRT_B64__
+  - path: /var/lib/rancher/k3s/server/tls/server-ca.key
+    permissions: '0600'
+    encoding: b64
+    content: __CA_KEY_B64__
+
+runcmd:
+  # traefik выключен: платформа рендерит Ingress с классом nginx, контроллер
+  # ставит прогон. metrics-server не нужен — автоскейлинга здесь нет.
+  - >
+    curl -sfL https://get.k3s.io |
+    INSTALL_K3S_EXEC="server --disable=traefik --disable=metrics-server
+    --tls-san __HOST__ --tls-san __IP__
+    --kube-apiserver-arg=token-auth-file=/etc/rancher/k3s/platform-tokens.csv"
+    sh -
