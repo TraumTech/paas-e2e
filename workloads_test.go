@@ -50,12 +50,21 @@ func TestDeployedWorkloadsHealthy(t *testing.T) {
 						t.Errorf("процесс %s: готовых реплик %d из %d желаемых",
 							process.Name, process.ReadyReplicas, process.DesiredReplicas)
 					}
+					// Завершённые экземпляры — след вытеснений с прерываемых узлов,
+					// платформа отдаёт их вместе с живыми; здоровье определяют живые.
+					finished := 0
 					for _, pod := range process.Pods {
+						if pod.Phase == "Succeeded" || pod.Phase == "Failed" {
+							finished++
+							continue
+						}
 						if !pod.Ready {
 							t.Errorf("процесс %s, экземпляр %s: не готов (%s, %s %s)",
 								process.Name, pod.Name, pod.Phase, pod.Reason, pod.Message)
 						}
 					}
+					t.Logf("процесс %s: готово %d из %d, завершённых экземпляров %d",
+						process.Name, process.ReadyReplicas, process.DesiredReplicas, finished)
 				}
 			})
 		}

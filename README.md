@@ -34,11 +34,13 @@
 PAAS_API_TOKEN=<машинный или личный токен> go test -v ./...
 ```
 
-Со своей машины отдельный токен заводить не нужно — годится сохранённый вход
-`paas-cli`:
+Со своей машины отдельный токен заводить не нужно: если переменные не заданы,
+набор берёт сохранённый вход `paas-cli` из его файла
+(`<UserConfigDir>/paas-cli/session`, после `paas-cli auth login`) и
+предъявляет его так же, как сам CLI:
 
 ```sh
-PAAS_SESSION_TOKEN="$(cat "$HOME/Library/Application Support/paas-cli/session")" go test -v ./...
+go test -v ./...
 ```
 
 Без доступа прогон **падает**, а не пропускается: молча зелёная проверка хуже
@@ -49,7 +51,7 @@ PAAS_SESSION_TOKEN="$(cat "$HOME/Library/Application Support/paas-cli/session")"
 | Переменная | По умолчанию | Назначение |
 |---|---|---|
 | `PAAS_API_TOKEN` | — | машинный или личный токен платформы |
-| `PAAS_SESSION_TOKEN` | — | сохранённый вход `paas-cli` (альтернатива токену) |
+| `PAAS_SESSION_TOKEN` | — | сессия identity-провайдера (альтернатива токену) |
 | `PAAS_API_URL` | `https://api.paas.traumtech.ru` | адрес API |
 | `PAAS_WEB_URL` | `https://paas.traumtech.ru` | адрес веб-интерфейса |
 | `PAAS_AUTH_URL` | `https://auth.paas.traumtech.ru` | адрес входа в аккаунт |

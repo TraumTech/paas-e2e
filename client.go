@@ -9,8 +9,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -25,9 +27,9 @@ const (
 
 // Config — куда ходим и чем предъявляемся. Адреса по умолчанию прод; доступ
 // обязателен: без него проверка не «пропускается», а падает, иначе сломанная
-// платформа выглядела бы зелёной. По расписанию ходим машинным токеном; на
-// своей машине хватает сохранённого входа paas-cli — отдельный токен ради
-// разового прогона заводить не нужно.
+// платформа выглядела бы зелёной. По расписанию ходим личным токеном из
+// секрета; на своей машине хватает сохранённого входа paas-cli — он читается
+// из его же файла, отдельный токен ради разового прогона заводить не нужно.
 type Config struct {
 	APIURL       string
 	WebURL       string
@@ -47,7 +49,9 @@ func ConfigFromEnv() (Config, error) {
 		Timeout:      defaultTimeout,
 	}
 	if cfg.Token == "" && cfg.SessionToken == "" {
-		return Config{}, errors.New("не задан ни PAAS_API_TOKEN (машинный или личный токен), ни PAAS_SESSION_TOKEN (сохранённый вход paas-cli)")
+		if err := cfg.loadCLILogin(); err != nil {
+			return Config{}, fmt.Errorf("не задан ни PAAS_API_TOKEN (машинный или личный токен), ни PAAS_SESSION_TOKEN, а сохранённый вход paas-cli не читается: %w", err)
+		}
 	}
 	if raw := os.Getenv("PAAS_E2E_TIMEOUT"); raw != "" {
 		d, err := time.ParseDuration(raw)
@@ -57,6 +61,46 @@ func ConfigFromEnv() (Config, error) {
 		cfg.Timeout = d
 	}
 	return cfg, nil
+}
+
+// loadCLILogin берёт сохранённый вход paas-cli из его файла
+// (<UserConfigDir>/paas-cli/session). Формат — тот же, что пишет CLI: JSON с
+// видом креденшела и секретом; личный токен предъявляется как машинный, сессия
+// провайдера — своим заголовком. Файл прежних версий CLI — голая строка сессии.
+func (cfg *Config) loadCLILogin() error {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return err
+	}
+	path := filepath.Join(dir, "paas-cli", "session")
+	data, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("%s нет — войдите через `paas-cli auth login`", path)
+	}
+	if err != nil {
+		return err
+	}
+	raw := strings.TrimSpace(string(data))
+	if raw == "" {
+		return fmt.Errorf("%s пуст", path)
+	}
+	var credential struct {
+		Kind  string `json:"kind"`
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal([]byte(raw), &credential); err != nil {
+		cfg.SessionToken = raw
+		return nil
+	}
+	if credential.Token == "" {
+		return fmt.Errorf("%s без токена", path)
+	}
+	if credential.Kind == "personal_token" {
+		cfg.Token = credential.Token
+	} else {
+		cfg.SessionToken = credential.Token
+	}
+	return nil
 }
 
 func envOr(key, fallback string) string {
