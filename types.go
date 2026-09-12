@@ -32,7 +32,6 @@ type Version struct {
 	ID             string    `json:"id"`
 	Number         int64     `json:"number"`
 	Image          string    `json:"image"`
-	BuildID        string    `json:"build_id"`
 	Branch         string    `json:"branch"`
 	CommitRevision string    `json:"commit_revision"`
 	Environment    string    `json:"environment"`

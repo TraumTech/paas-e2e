@@ -98,10 +98,11 @@ func TestServiceVersionsReadable(t *testing.T) {
 				t.Skip("версий пока нет")
 			}
 			withVersions++
-			// Образ версия несёт сама (DEP-02) или через сборку (DEP-19) — без
-			// того и другого катить нечего.
+			// Образ у версии платформенной выкатки живёт в сборке (DEP-19) и в
+			// публичный контракт версии не входит — след линии доставки здесь
+			// номер и ревизия коммита.
 			for _, version := range versions {
-				if version.Number <= 0 || (version.Image == "" && version.BuildID == "") {
+				if version.Number <= 0 || version.CommitRevision == "" {
 					t.Errorf("версия пришла неполной: %+v", version)
 				}
 			}
