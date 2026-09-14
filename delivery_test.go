@@ -31,11 +31,13 @@ func TestFullDeliveryPath(t *testing.T) {
 	sweepLeftovers(t)
 
 	name := disposablePrefix + time.Now().UTC().Format("20060102-150405")
+	product := anyProduct(t)
 
 	// Создание — сага из четырёх шагов (регистрация, репозиторий, доступ CI,
 	// продукт); отказ приходит с названием сорвавшегося шага в теле.
 	var service Service
-	err := platform.Post(contextFor(t, 3*time.Minute), "/services", map[string]string{"name": name}, &service)
+	err := platform.Post(contextFor(t, 3*time.Minute), "/services",
+		map[string]string{"name": name, "product_id": product.ID}, &service)
 	if err != nil {
 		fail(t, "создание сервиса "+name+" с репозиторием", err)
 	}
@@ -110,6 +112,20 @@ func TestFullDeliveryPath(t *testing.T) {
 	if !found {
 		t.Fatalf("выкатка не оставила версии в окружении %s: %+v", environment, versions)
 	}
+}
+
+// Без продукта сервис не создаётся, а продукта «по умолчанию» у свежей
+// организации нет — его заводит разовая подготовка.
+func anyProduct(t *testing.T) Product {
+	t.Helper()
+	var list ProductList
+	if err := platform.Get(testContext(t), "/organizations/current/products", &list); err != nil {
+		fail(t, "перечень продуктов песочницы", err)
+	}
+	if len(list.Products) == 0 {
+		t.Fatal("в песочнице нет ни одного продукта — сервис завести не в чем (hack/prepare-once.sh заводит продукт e2e)")
+	}
+	return list.Products[0]
 }
 
 // Кластер окружения обязан быть кластером прогона: иначе болванка уедет в

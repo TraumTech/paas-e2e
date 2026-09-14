@@ -128,34 +128,45 @@ fi
 note "организация-песочница: $(api GET /organizations/current | jget 'd["name"]')"
 secret PAAS_SANDBOX_API_TOKEN "$SANDBOX_TOKEN"
 
+# Сервис без продукта не создаётся, а у свежей организации продуктов нет.
+if [ "$(api GET /organizations/current/products | jget 'len(d["products"])')" = "0" ]; then
+  api POST /organizations/current/products '{"name":"e2e"}' >/dev/null
+  note "продукт e2e заведён"
+fi
+
 # ---------------------------------------------------------------------------
 log "2/6 хостинг кода песочницы"
 
 scm_count() { api GET /organizations/current/scm-connections | jget 'len(d["connections"])'; }
 if [ "$(scm_count)" = "0" ]; then
-  install_url="$(api POST /organizations/current/scm-connections/install-intent | jget 'd["install_url"]')"
+  # Нонс живёт недолго; этот — только чтобы GitHub показал выбор аккаунта.
+  # Завершать подключение будем свежим: установка на GitHub уже состоялась.
+  intent_state() { api POST /organizations/current/scm-connections/install-intent | python3 -c 'import json,sys,urllib.parse as u; print(u.parse_qs(u.urlparse(json.load(sys.stdin)["install_url"]).query)["state"][0])'; }
   cat >&2 <<MSG
 
-  Нужен GitHub-аккаунт (или организация) ПЕСОЧНИЦЫ — не тот, где стоит
+  Нужен GitHub-аккаунт или организация ПЕСОЧНИЦЫ — не та, где стоит
   приложение боевой организации: одна установка принадлежит одной организации
-  платформы. Откройте в приватном окне, войдя в GitHub этим аккаунтом:
+  платформы. Приложение должно быть публичным (настройки GitHub App →
+  Advanced → Make public), иначе GitHub молча уведёт на существующую
+  установку. Откройте, войдя в GitHub владельцем аккаунта песочницы:
 
-    ${install_url}
+    https://github.com/apps/traumtech-paas/installations/new?state=$(intent_state)
 
-  Установите приложение. GitHub вернёт вас на платформу адресом с
-  installation_id и state — скопируйте его из строки браузера сразу, до того
-  как интерфейс уведёт на вход, и вставьте сюда. Если вместо этого вошли в
-  интерфейс участником ${SANDBOX_EMAIL} и завершили подключение там — Enter.
+  Выберите аккаунт песочницы и установите. GitHub вернёт вас на платформу
+  адресом с installation_id — вставьте этот адрес (или один installation_id;
+  он же виден в настройках аккаунта GitHub → Installed GitHub Apps → в адресе
+  страницы приложения) сюда.
 
 MSG
   while [ "$(scm_count)" = "0" ]; do
-    printf '  адрес возврата: ' >&2
-    read -r return_url
-    [ -n "$return_url" ] || continue
-    if body="$(python3 -c 'import json,sys,urllib.parse as u; q=u.parse_qs(u.urlparse(sys.argv[1]).query); print(json.dumps({"installation_id":q["installation_id"][0],"state":q["state"][0]}))' "$return_url" 2>/dev/null)"; then
-      api POST /organizations/current/scm-connections "$body" >/dev/null || note "подключение не завершено — повторите установку"
+    printf '  адрес возврата или installation_id: ' >&2
+    read -r answer
+    [ -n "$answer" ] || continue
+    if installation_id="$(python3 -c 'import sys,urllib.parse as u; a=sys.argv[1].strip(); print(a if a.isdigit() else u.parse_qs(u.urlparse(a).query)["installation_id"][0])' "$answer" 2>/dev/null)"; then
+      api POST /organizations/current/scm-connections "$(jbody "installation_id=${installation_id}" "state=$(intent_state)")" >/dev/null \
+        || note "подключение не завершено — проверьте, что приложение установлено в аккаунт песочницы"
     else
-      note "в адресе нет installation_id/state"
+      note "не разобрал ни адреса с installation_id, ни числа"
     fi
   done
 fi
@@ -165,20 +176,27 @@ note "хостинг кода: $(api GET /organizations/current/scm-connections 
 log "3/6 креденшел реестра ghcr.io — кластер тянет приватный образ заготовки"
 
 has_ghcr() { api GET /organizations/current/registry-credentials | jget 'any(c.get("server")=="ghcr.io" for c in d["credentials"])'; }
+if [ -z "${E2E_GHCR_TOKEN:-}" ] && state_has ghcr.token; then
+  E2E_GHCR_TOKEN="$(state_get ghcr.token)"
+  E2E_GHCR_USER="${E2E_GHCR_USER:-$(state_get ghcr.user)}"
+fi
 if [ -n "${E2E_GHCR_TOKEN:-}" ] || [ "$(has_ghcr)" != "True" ]; then
   if [ -z "${E2E_GHCR_TOKEN:-}" ]; then
     cat >&2 <<MSG
 
-  Нужен токен GitHub-аккаунта песочницы с правом read:packages (classic PAT,
-  github.com/settings/tokens). API для выпуска токенов у GitHub нет.
+  Нужен токен с правом read:packages на пакеты аккаунта песочницы — classic
+  PAT владельца этого аккаунта: github.com/settings/tokens/new?scopes=read:packages
+  (срок — «No expiration»). API для выпуска токенов у GitHub нет.
 
 MSG
-    printf '  логин GitHub песочницы: ' >&2; read -r E2E_GHCR_USER
+    printf '  логин GitHub владельца токена: ' >&2; read -r E2E_GHCR_USER
     printf '  токен (ввод скрыт): ' >&2; read -rs E2E_GHCR_TOKEN; echo >&2
   fi
-  : "${E2E_GHCR_USER:?логин GitHub песочницы — E2E_GHCR_USER}"
+  : "${E2E_GHCR_USER:?логин владельца токена — E2E_GHCR_USER}"
   api PUT /organizations/current/registry-credentials/ghcr.io \
     "$(jbody "username=${E2E_GHCR_USER}" "token=${E2E_GHCR_TOKEN}")" >/dev/null
+  state_put ghcr.user "$E2E_GHCR_USER"
+  state_put ghcr.token "$E2E_GHCR_TOKEN"
   note "креденшел ghcr.io сохранён"
 else
   note "креденшел ghcr.io уже есть"
