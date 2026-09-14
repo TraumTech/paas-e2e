@@ -127,3 +127,22 @@ type CompatibilityReport struct {
 	Breaking  bool                    `json:"breaking"`
 	Consumers []ConsumerCompatibility `json:"consumers"`
 }
+
+type Build struct {
+	ID             string    `json:"id"`
+	Branch         string    `json:"branch"`
+	CommitRevision string    `json:"commit_revision"`
+	Image          string    `json:"image"`
+	HasContract    bool      `json:"has_contract"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
+type BuildList struct {
+	Builds []Build `json:"builds"`
+}
+
+type Deployment struct {
+	Environment string `json:"environment"`
+	ClusterName string `json:"cluster_name"`
+	Namespace   string `json:"namespace"`
+}

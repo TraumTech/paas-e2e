@@ -29,6 +29,15 @@ func testContext(t *testing.T) context.Context {
 	return ctx
 }
 
+// contextFor — для шагов, которые заведомо дольше одного запроса: создание
+// сервиса с репозиторием, выкатка, удаление.
+func contextFor(t *testing.T, timeout time.Duration) context.Context {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	t.Cleanup(cancel)
+	return ctx
+}
+
 // fail называет причину падения так, чтобы из отчёта было видно виновника:
 // «не ответила» — авария доступности, «отказала» — платформа жива, но не
 // пустила или сломалась внутри.

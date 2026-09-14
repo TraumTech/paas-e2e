@@ -163,6 +163,12 @@ func (c *Client) Post(ctx context.Context, path string, body, out any) error {
 	return c.do(ctx, http.MethodPost, c.cfg.APIURL+path, true, body, out)
 }
 
+// Delete удаляет ресурс API от имени владельца токена. Нужен только
+// разрушающим сценариям организации-песочницы.
+func (c *Client) Delete(ctx context.Context, path string) error {
+	return c.do(ctx, http.MethodDelete, c.cfg.APIURL+path, true, nil, nil)
+}
+
 // StatusOf возвращает код ответа, не считая отказ ошибкой: нужно там, где
 // проверяется сам отказ (запрос без токена) или доступность внешнего входа.
 func (c *Client) StatusOf(ctx context.Context, rawURL string, auth bool) (int, error) {
