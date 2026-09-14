@@ -78,6 +78,63 @@ go test -v -tags cluster ./...
 hack/cluster-down.sh       # снести (идемпотентно, зовётся и перед подъёмом)
 ```
 
+### Разовая подготовка — руками владельца, по порядку
+
+Всё ниже делается один раз; прогон в CI потом только поднимает и сносит
+машину. Порядок важен: подключение кластера заводится в организации-песочнице,
+поэтому она нужна раньше кластера.
+
+1. **Организация-песочница.** Зарегистрировать отдельного участника платформы
+   на `https://paas.traumtech.ru/auth/registration` (регистрация открыта);
+   его личная организация и есть песочница. Выпустить ему личный токен на
+   странице токенов и положить в секрет `PAAS_SANDBOX_API_TOKEN`. Боевая
+   организация в кластерном прогоне не участвует.
+2. **Сервисный аккаунт для CI** — поднимать и сносить машину с зарезервированным
+   адресом:
+
+   ```sh
+   yc iam service-account create --name paas-e2e-ci
+   for role in compute.editor vpc.user vpc.publicAdmin; do
+     yc resource-manager folder add-access-binding "$(yc config get folder-id)" \
+       --role "$role" --subject "serviceAccount:$(yc iam service-account get --name paas-e2e-ci --format json | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')"
+   done
+   yc iam key create --service-account-name paas-e2e-ci --output paas-e2e-ci.json
+   gh secret set YC_SA_KEY < paas-e2e-ci.json && rm paas-e2e-ci.json
+   gh secret set YC_CLOUD_ID  --body "$(yc config get cloud-id)"
+   gh secret set YC_FOLDER_ID --body "$(yc config get folder-id)"
+   ```
+
+3. **Адрес, DNS, корневой сертификат, токены** — `hack/bootstrap-once.sh`;
+   он печатает готовые `gh secret set` для `E2E_*`. Подсеть — `default-ru-central1-a`.
+   Записи `e2e` и `*.e2e` нужны явно: общий `*.traumtech.ru` смотрит на вход
+   постоянного кластера, а не на машину прогона.
+4. **Первый подъём и подключение.** Поднять кластер с теми же переменными,
+   что в workflow, и подключить его к платформе **от лица песочницы** по
+   закреплённым реквизитам — штатный `paas-cli cluster connect` не годится,
+   он заводит учётную запись в кластере сам и регистрирует новое подключение
+   на каждый запуск:
+
+   ```sh
+   hack/cluster-up.sh
+   curl -sf -X POST "$PAAS_API_URL/organizations/current/clusters" \
+     -H "Authorization: Bearer $PAAS_SANDBOX_API_TOKEN" -H 'Content-Type: application/json' \
+     -d "$(python3 -c 'import json,os,base64; print(json.dumps({
+       "name": "paas-e2e", "topology": "zonal",
+       "endpoint": "https://" + os.environ["E2E_CLUSTER_HOST"] + ":6443",
+       "ca_certificate": base64.b64decode(os.environ["E2E_CA_CRT"]).decode(),
+       "token": os.environ["E2E_PLATFORM_TOKEN"]}))')"
+   ```
+
+   Платформа проверяет связь до сохранения, поэтому кластер в этот момент
+   должен быть поднят. Дальше в песочнице: назначить кластер окружению `dev`,
+   завести доменную зону и задать ей базовый хост `e2e.traumtech.ru` в `dev`
+   (через SPA или API `PUT /organizations/current/environments/dev/cluster`,
+   `POST /organizations/current/domain-zones`,
+   `PUT /organizations/current/domain-zones/{slug}/hosts/dev`). В конце —
+   `hack/cluster-down.sh`.
+5. **Проверить:** `gh workflow run e2e-cluster` — зелёный прогон закрывает
+   `E2E-03`.
+
 Что кладётся в свежий кластер: права платформы — **ровно те, что она сама
 объявляет требуемыми** (если начнёт ходить за большим, прогон это увидит);
 контроллер входа `ingress-nginx` и `cert-manager` тех же версий, что стоят в
