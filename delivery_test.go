@@ -26,6 +26,7 @@ const disposablePrefix = "e2e-"
 // Идёт только в организации-песочнице: сервис создаётся, и выкатка идёт в
 // кластер прогона, который вместе со всем содержимым сносится в конце.
 func TestFullDeliveryPath(t *testing.T) {
+	ensurePreconditions(t)
 	environment := envOr("E2E_ENVIRONMENT", "dev")
 	refuseUnlessRunCluster(t, environment)
 	sweepLeftovers(t)

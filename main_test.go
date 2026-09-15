@@ -29,6 +29,13 @@ func testContext(t *testing.T) context.Context {
 	return ctx
 }
 
+// background — контекст с таймаутом клиента там, где нет t (предусловия).
+func background() context.Context {
+	ctx, cancel := context.WithTimeout(context.Background(), platform.Config().Timeout)
+	_ = cancel // истечёт сам; запросы короткие
+	return ctx
+}
+
 // contextFor — для шагов, которые заведомо дольше одного запроса: создание
 // сервиса с репозиторием, выкатка, удаление.
 func contextFor(t *testing.T, timeout time.Duration) context.Context {

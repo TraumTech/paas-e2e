@@ -146,3 +146,42 @@ type Deployment struct {
 	ClusterName string `json:"cluster_name"`
 	Namespace   string `json:"namespace"`
 }
+
+type ScmConnection struct {
+	ID           string `json:"id"`
+	Provider     string `json:"provider"`
+	AccountLogin string `json:"account_login"`
+	AccountType  string `json:"account_type"`
+}
+
+type ScmConnectionList struct {
+	Connections []ScmConnection `json:"connections"`
+}
+
+type InstallIntent struct {
+	InstallURL string `json:"install_url"`
+}
+
+type RegistryCredential struct {
+	Server   string `json:"server"`
+	Username string `json:"username"`
+}
+
+type RegistryCredentialList struct {
+	Credentials []RegistryCredential `json:"credentials"`
+}
+
+type ZoneHost struct {
+	Environment string `json:"environment"`
+	BaseHost    string `json:"base_host"`
+}
+
+type DomainZone struct {
+	Slug  string     `json:"slug"`
+	Name  string     `json:"name"`
+	Hosts []ZoneHost `json:"hosts"`
+}
+
+type DomainZoneList struct {
+	Zones []DomainZone `json:"zones"`
+}

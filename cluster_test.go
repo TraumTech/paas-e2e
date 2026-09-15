@@ -95,10 +95,8 @@ func TestClusterReadyForDeployments(t *testing.T) {
 // Платформа по-прежнему числит этот кластер своим и подключённым: запись
 // заводится один раз, а кластер под ней меняется каждый прогон.
 func TestPlatformStillHoldsClusterConnection(t *testing.T) {
-	name := os.Getenv("E2E_CLUSTER_NAME")
-	if name == "" {
-		name = "paas-e2e"
-	}
+	ensurePreconditions(t)
+	name := envOr("E2E_CLUSTER_NAME", "paas-e2e")
 
 	var list ClusterList
 	if err := platform.Get(testContext(t), "/organizations/current/clusters", &list); err != nil {

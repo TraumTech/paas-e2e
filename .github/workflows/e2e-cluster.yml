@@ -23,15 +23,20 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 40
     env:
-      E2E_CLUSTER_HOST: ${{ secrets.E2E_CLUSTER_HOST }}
-      E2E_CLUSTER_IP: ${{ secrets.E2E_CLUSTER_IP }}
+      # Реквизиты — то, что прогон не может породить сам (README, «Реквизиты»).
+      # Всё остальное — адрес, DNS, подключение кластера, продукт, зона — прогон
+      # обеспечивает себе сам, каждый раз.
       E2E_CA_CRT: ${{ secrets.E2E_CA_CRT }}
       E2E_CA_KEY: ${{ secrets.E2E_CA_KEY }}
       E2E_PLATFORM_TOKEN: ${{ secrets.E2E_PLATFORM_TOKEN }}
       E2E_ADMIN_TOKEN: ${{ secrets.E2E_ADMIN_TOKEN }}
-      E2E_SUBNET: ${{ secrets.E2E_SUBNET }}
-      E2E_CLUSTER_NAME: ${{ vars.E2E_CLUSTER_NAME || 'paas-e2e' }}
+      E2E_GHCR_USER: ${{ secrets.E2E_GHCR_USER }}
+      E2E_GHCR_TOKEN: ${{ secrets.E2E_GHCR_TOKEN }}
+      E2E_GITHUB_INSTALLATION_ID: ${{ secrets.E2E_GITHUB_INSTALLATION_ID }}
       PAAS_API_TOKEN: ${{ secrets.PAAS_SANDBOX_API_TOKEN }}
+      E2E_CLUSTER_NAME: ${{ vars.E2E_CLUSTER_NAME || 'paas-e2e' }}
+      E2E_CLUSTER_HOST: ${{ vars.E2E_CLUSTER_HOST || 'e2e.traumtech.ru' }}
+      E2E_SUBNET: ${{ vars.E2E_SUBNET || 'default-ru-central1-a' }}
       KUBECONFIG_OUT: ${{ github.workspace }}/.e2e-kubeconfig
 
     steps:

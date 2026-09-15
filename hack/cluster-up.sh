@@ -3,7 +3,7 @@
 # выкаткам платформы: контроллер входа, выпуск сертификатов, права платформы.
 #
 # Кластер каждый раз новый, но адрес, корневой сертификат и токены у него те же
-# — их задаёт разовая подготовка (prepare-once.sh). Поэтому подключение
+# — их выпускает разово secrets-once.sh. Поэтому подключение
 # кластера на платформе заводится один раз и переживает пересоздание.
 #
 # Использование: hack/cluster-up.sh
@@ -12,8 +12,6 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 
-: "${E2E_CLUSTER_HOST:?адрес кластера, например e2e.traumtech.ru}"
-: "${E2E_CLUSTER_IP:?зарезервированный публичный IP}"
 : "${E2E_CA_CRT:?корневой сертификат кластера, base64}"
 : "${E2E_CA_KEY:?ключ корневого сертификата, base64}"
 : "${E2E_PLATFORM_TOKEN:?токен, которым платформа ходит в кластер}"
@@ -25,6 +23,10 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 VM_NAME="${E2E_VM_NAME:-paas-e2e}"
 ZONE="${E2E_ZONE:-ru-central1-a}"
 KUBECONFIG_OUT="${KUBECONFIG_OUT:-$PWD/.e2e-kubeconfig}"
+E2E_CLUSTER_HOST="${E2E_CLUSTER_HOST:-e2e.traumtech.ru}"
+ADDRESS_NAME="${E2E_ADDRESS_NAME:-paas-e2e}"
+DNS_ZONE="${E2E_DNS_ZONE:-traumtech-ru}"
+DNS_DOMAIN="${E2E_DNS_DOMAIN:-traumtech.ru}"
 API="https://${E2E_CLUSTER_HOST}:6443"
 
 # Версии повторяют то, что стоит в постоянном кластере: проверять выкатку на
@@ -39,6 +41,22 @@ log() { printf '\n▸ %s\n' "$*" >&2; }
 # упало бы. Снос до создания делает скрипт повторяемым.
 log "убираем машину, оставшуюся от прошлого прогона (если есть)"
 "$HERE/cluster-down.sh"
+
+# Адрес постоянный — под него записаны DNS и подключение на платформе, — но
+# резервирует и прописывает его сам подъём: сделанное узнаёт и пропускает.
+log "адрес ${ADDRESS_NAME} и записи DNS для ${E2E_CLUSTER_HOST}"
+if ! yc vpc address get --name "$ADDRESS_NAME" >/dev/null 2>&1; then
+  yc vpc address create --name "$ADDRESS_NAME" --external-ipv4 "zone=${ZONE}" >/dev/null
+fi
+E2E_CLUSTER_IP="$(yc vpc address get --name "$ADDRESS_NAME" --format json \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["external_ipv4_address"]["address"])')"
+# Wildcard нужен: хост выкатки складывается из имени сервиса, а он каждый
+# прогон новый. Общий *.${DNS_DOMAIN} смотрит на вход постоянного кластера,
+# поэтому записи поддомена заводятся явно; replace — идемпотентно.
+SUBDOMAIN="${E2E_CLUSTER_HOST%.${DNS_DOMAIN}}"
+yc dns zone replace-records --name "$DNS_ZONE" \
+  --record "${SUBDOMAIN} 300 A ${E2E_CLUSTER_IP}" \
+  --record "*.${SUBDOMAIN} 300 A ${E2E_CLUSTER_IP}" >/dev/null
 
 log "создаём машину ${VM_NAME} в ${ZONE} с адресом ${E2E_CLUSTER_IP}"
 CLOUD_INIT="$(mktemp)"

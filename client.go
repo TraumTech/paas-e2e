@@ -163,6 +163,11 @@ func (c *Client) Post(ctx context.Context, path string, body, out any) error {
 	return c.do(ctx, http.MethodPost, c.cfg.APIURL+path, true, body, out)
 }
 
+// Put кладёт ресурс API от имени владельца токена; повтор заменяет прежнее.
+func (c *Client) Put(ctx context.Context, path string, body, out any) error {
+	return c.do(ctx, http.MethodPut, c.cfg.APIURL+path, true, body, out)
+}
+
 // Delete удаляет ресурс API от имени владельца токена. Нужен только
 // разрушающим сценариям организации-песочницы.
 func (c *Client) Delete(ctx context.Context, path string) error {

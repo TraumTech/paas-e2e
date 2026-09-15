@@ -29,10 +29,7 @@ type Kube struct {
 // адрес, закреплённый корневой сертификат и токен. Совпадение этих трёх вещей
 // со вчерашними — и есть проверяемый инвариант: кластер новый, доступ прежний.
 func KubeConfigFromEnv(token string) (*Kube, error) {
-	host := os.Getenv("E2E_CLUSTER_HOST")
-	if host == "" {
-		return nil, errors.New("не задан E2E_CLUSTER_HOST")
-	}
+	host := clusterHost()
 	encodedCA := os.Getenv("E2E_CA_CRT")
 	if encodedCA == "" {
 		return nil, errors.New("не задан E2E_CA_CRT")
@@ -128,3 +125,7 @@ func (c conditioned) condition(name string) (status, reason, message string, fou
 	}
 	return "", "", "", false
 }
+
+// clusterHost — имя кластера прогона: под ним подъём кластера прописывает
+// адрес, и по нему платформа знает кластер.
+func clusterHost() string { return envOr("E2E_CLUSTER_HOST", "e2e.traumtech.ru") }
