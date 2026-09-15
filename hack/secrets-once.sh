@@ -153,8 +153,8 @@ if [ -z "$sa_id" ]; then
   note "сервисный аккаунт создан"
 fi
 # compute.editor — машина; vpc.user — подсеть; vpc.publicAdmin — зарезервированный
-# адрес; dns.editor — записи под кластер прогона.
-for role in compute.editor vpc.user vpc.publicAdmin dns.editor; do
+# адрес; dns.editor — записи под кластер прогона; storage.editor — state OpenTofu.
+for role in compute.editor vpc.user vpc.publicAdmin dns.editor storage.editor; do
   yc resource-manager folder add-access-binding "$FOLDER_ID" --role "$role" \
     --subject "serviceAccount:${sa_id}" >/dev/null 2>&1 || true
 done
@@ -166,6 +166,22 @@ fi
 secret YC_SA_KEY "$(state_get yc-sa-key.json)"
 secret YC_CLOUD_ID "$(yc config get cloud-id)"
 secret YC_FOLDER_ID "$FOLDER_ID"
+
+# State OpenTofu живёт в бакете между прогонами; бэкенд S3 ходит в него
+# статическим ключом сервисного аккаунта.
+STATE_BUCKET="${E2E_STATE_BUCKET:-traumtech-paas-e2e-state}"
+if ! yc storage bucket get --name "$STATE_BUCKET" >/dev/null 2>&1; then
+  yc storage bucket create --name "$STATE_BUCKET" --max-size 1073741824 >/dev/null
+  note "бакет ${STATE_BUCKET} создан"
+fi
+if ! state_has s3.secret; then
+  key="$(yc iam access-key create --service-account-id "$sa_id" --format json)"
+  state_put s3.access "$(printf '%s' "$key" | jget 'd["access_key"]["key_id"]')"
+  state_put s3.secret "$(printf '%s' "$key" | jget 'd["secret"]')"
+  note "статический ключ для бакета выпущен"
+fi
+secret YC_S3_ACCESS_KEY "$(state_get s3.access)"
+secret YC_S3_SECRET_KEY "$(state_get s3.secret)"
 
 # ---------------------------------------------------------------------------
 log "5/5 корневой сертификат и токены кластера прогона"

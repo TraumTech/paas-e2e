@@ -1,1 +1,5 @@
 .e2e-kubeconfig
+.yc-key.json
+infra/.terraform/
+*.tfstate
+*.tfstate.*

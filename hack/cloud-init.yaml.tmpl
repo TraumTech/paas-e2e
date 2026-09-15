@@ -1,6 +1,9 @@
 #cloud-config
 # Свежий одноузловой кластер под один прогон проверок. Живёт минуты, поэтому
-# ничего не переживает перезагрузку и ничего не бэкапится.
+# ничего не переживает перезагрузку и ничего не бэкапится. Поднимается уже
+# готовым к выкаткам платформы: всё, что нужно внутри кластера, лежит в
+# каталоге манифестов k3s и применяется им самим при старте — подъёму снаружи
+# остаётся дождаться готовности.
 write_files:
   # Учётные записи API-сервера статическим файлом: только так у каждого нового
   # кластера остаются ТЕ ЖЕ токены, что записаны у платформы. Иначе после
@@ -23,12 +26,46 @@ write_files:
     encoding: b64
     content: __CA_KEY_B64__
 
+  # Права платформе — ровно те, что она сама объявила требуемыми в момент
+  # прогона (required_access_to_rbac.py). Начнёт ходить за большим — прогон
+  # это увидит; на постоянном кластере расхождение прячется за старой ролью.
+  - path: /var/lib/rancher/k3s/server/manifests/platform-rbac.json
+    permissions: '0644'
+    encoding: b64
+    content: __PLATFORM_RBAC_B64__
+
+  # Имя выпускающего задано платформой: она проставляет его аннотацией на
+  # каждом сгенерированном Ingress. k3s повторяет применение, пока CRD
+  # cert-manager не появится.
+  - path: /var/lib/rancher/k3s/server/manifests/letsencrypt-prod.yaml
+    permissions: '0644'
+    content: |
+      apiVersion: cert-manager.io/v1
+      kind: ClusterIssuer
+      metadata:
+        name: letsencrypt-prod
+      spec:
+        acme:
+          server: https://acme-v02.api.letsencrypt.org/directory
+          email: __ACME_EMAIL__
+          privateKeySecretRef:
+            name: letsencrypt-prod-account-key
+          solvers:
+            - http01:
+                ingress:
+                  class: nginx
+
 runcmd:
-  # traefik выключен: платформа рендерит Ingress с классом nginx, контроллер
-  # ставит прогон. metrics-server не нужен — автоскейлинга здесь нет.
+  # Контроллер входа и cert-manager тех же версий, что в постоянном кластере:
+  # проверять выкатку на другом контроллере смысла нет.
+  - curl -sfL -o /var/lib/rancher/k3s/server/manifests/ingress-nginx.yaml https://raw.githubusercontent.com/kubernetes/ingress-nginx/__INGRESS_NGINX_VERSION__/deploy/static/provider/cloud/deploy.yaml
+  - curl -sfL -o /var/lib/rancher/k3s/server/manifests/cert-manager.yaml https://github.com/cert-manager/cert-manager/releases/download/__CERT_MANAGER_VERSION__/cert-manager.yaml
+  # traefik выключен: платформа рендерит Ingress с классом nginx. metrics-server
+  # не нужен — автоскейлинга здесь нет. SAN — только имя: и платформа, и прогон
+  # ходят по нему, а адрес до подъёма может быть ещё не зарезервирован.
   - >
     curl -sfL https://get.k3s.io |
     INSTALL_K3S_EXEC="server --disable=traefik --disable=metrics-server
-    --tls-san __HOST__ --tls-san __IP__
+    --tls-san __HOST__
     --kube-apiserver-arg=token-auth-file=/etc/rancher/k3s/platform-tokens.csv"
     sh -
