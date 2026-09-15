@@ -20,7 +20,6 @@ source "$HERE/infra.sh"
 : "${E2E_CA_KEY:?ключ корневого сертификата, base64}"
 : "${E2E_PLATFORM_TOKEN:?токен, которым платформа ходит в кластер}"
 : "${E2E_ADMIN_TOKEN:?токен, которым в кластер ходит сам прогон}"
-: "${PAAS_API_URL:=https://api.paas.traumtech.ru}"
 : "${PAAS_API_TOKEN:?токен платформы — из него берутся требуемые права}"
 
 E2E_CLUSTER_HOST="${E2E_CLUSTER_HOST:-e2e.traumtech.ru}"
@@ -37,11 +36,10 @@ ACME_EMAIL="${E2E_ACME_EMAIL:-ruslanbergutov@gmail.com}"
 log() { printf '\n▸ %s\n' "$*" >&2; }
 
 # Права платформе — ровно те, что она сама объявляет требуемыми: в cloud-init
-# они уезжают манифестом, k3s применит его при старте.
+# они уезжают манифестом, k3s применит его при старте. Спрашивает и рендерит
+# hack/rbac на Go — тем же клиентом, что ходят сценарии.
 log "собираем cloud-init: права платформы, контроллер входа, выпуск сертификатов"
-PLATFORM_RBAC_B64="$(curl -sf --max-time 20 -H "Authorization: Bearer ${PAAS_API_TOKEN}" \
-  "${PAAS_API_URL}/organizations/current/clusters/required-access" \
-  | python3 "$HERE/required_access_to_rbac.py" | base64 | tr -d '\n')"
+PLATFORM_RBAC_B64="$(cd "$HERE/.." && go run ./hack/rbac | base64 | tr -d '\n')"
 
 TF_VAR_user_data="$(sed \
   -e "s|__PLATFORM_TOKEN__|${E2E_PLATFORM_TOKEN}|" \

@@ -27,7 +27,7 @@ write_files:
     content: __CA_KEY_B64__
 
   # Права платформе — ровно те, что она сама объявила требуемыми в момент
-  # прогона (required_access_to_rbac.py). Начнёт ходить за большим — прогон
+  # прогона (hack/rbac). Начнёт ходить за большим — прогон
   # это увидит; на постоянном кластере расхождение прячется за старой ролью.
   - path: /var/lib/rancher/k3s/server/manifests/platform-rbac.json
     permissions: '0644'
