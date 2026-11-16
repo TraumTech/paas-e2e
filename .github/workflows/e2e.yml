@@ -24,9 +24,10 @@ on:
     secrets:
       PAAS_API_TOKEN:
         required: true
-      # paas-e2e приватный: токеном запуска вызывающего репо его не вычекаутить.
+      # Нужен, только пока paas-e2e приватный: токеном запуска вызывающего репо
+      # чужой приватный репозиторий не вычекаутить.
       E2E_REPO_TOKEN:
-        required: true
+        required: false
 
 jobs:
   check:

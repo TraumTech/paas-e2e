@@ -183,7 +183,6 @@ e2e:
     organization_id: ${{ vars.PAAS_E2E_ORGANIZATION_ID }}
   secrets:
     PAAS_API_TOKEN: ${{ secrets.PAAS_E2E_TOKEN }}
-    E2E_REPO_TOKEN: ${{ secrets.PAAS_REPOS_TOKEN }}
 ```
 
 `suite: gate` — только сценарии самой платформы: здоровье выкаченных
