@@ -11,16 +11,19 @@ import (
 	"io"
 	"io/fs"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
 const (
-	defaultAPIURL  = "https://api.paas.traumtech.ru"
-	defaultWebURL  = "https://paas.traumtech.ru"
-	defaultAuthURL = "https://auth.paas.traumtech.ru"
+	defaultAPIURL   = "https://api.paas.traumtech.ru"
+	defaultWebURL   = "https://paas.traumtech.ru"
+	defaultAuthURL  = "https://auth.paas.traumtech.ru"
+	defaultOAuthURL = "https://oauth.paas.traumtech.ru"
 
 	defaultTimeout = 20 * time.Second
 )
@@ -30,23 +33,33 @@ const (
 // платформа выглядела бы зелёной. По расписанию ходим личным токеном из
 // секрета; на своей машине хватает сохранённого входа paas-cli — он читается
 // из его же файла, отдельный токен ради разового прогона заводить не нужно.
+//
+// Бэкенд принимает только JWT (IAP-04): токен платформы `paas_uat_<id>.<секрет>`
+// меняется на короткий JWT у сервера авторизации (client_credentials), как это
+// делает CLI. Организация вызова выбирается заголовком X-Organization-Id
+// (TRA-506); без него платформа отвечает от имени личной организации.
 type Config struct {
-	APIURL       string
-	WebURL       string
-	AuthURL      string
-	Token        string
-	SessionToken string
-	Timeout      time.Duration
+	APIURL         string
+	WebURL         string
+	AuthURL        string
+	OAuthURL       string
+	Token          string
+	AccessToken    string
+	SessionToken   string
+	OrganizationID string
+	Timeout        time.Duration
 }
 
 func ConfigFromEnv() (Config, error) {
 	cfg := Config{
-		APIURL:       envOr("PAAS_API_URL", defaultAPIURL),
-		WebURL:       envOr("PAAS_WEB_URL", defaultWebURL),
-		AuthURL:      envOr("PAAS_AUTH_URL", defaultAuthURL),
-		Token:        os.Getenv("PAAS_API_TOKEN"),
-		SessionToken: os.Getenv("PAAS_SESSION_TOKEN"),
-		Timeout:      defaultTimeout,
+		APIURL:         envOr("PAAS_API_URL", defaultAPIURL),
+		WebURL:         envOr("PAAS_WEB_URL", defaultWebURL),
+		AuthURL:        envOr("PAAS_AUTH_URL", defaultAuthURL),
+		OAuthURL:       envOr("PAAS_OAUTH_URL", defaultOAuthURL),
+		Token:          os.Getenv("PAAS_API_TOKEN"),
+		SessionToken:   os.Getenv("PAAS_SESSION_TOKEN"),
+		OrganizationID: os.Getenv("PAAS_ORGANIZATION_ID"),
+		Timeout:        defaultTimeout,
 	}
 	if cfg.Token == "" && cfg.SessionToken == "" {
 		if err := cfg.loadCLILogin(); err != nil {
@@ -85,8 +98,9 @@ func (cfg *Config) loadCLILogin() error {
 		return fmt.Errorf("%s пуст", path)
 	}
 	var credential struct {
-		Kind  string `json:"kind"`
-		Token string `json:"token"`
+		Kind      string    `json:"kind"`
+		Token     string    `json:"token"`
+		ExpiresAt time.Time `json:"expires_at"`
 	}
 	if err := json.Unmarshal([]byte(raw), &credential); err != nil {
 		cfg.SessionToken = raw
@@ -95,9 +109,15 @@ func (cfg *Config) loadCLILogin() error {
 	if credential.Token == "" {
 		return fmt.Errorf("%s без токена", path)
 	}
-	if credential.Kind == "personal_token" {
+	switch credential.Kind {
+	case "oidc", "machine":
+		if !credential.ExpiresAt.IsZero() && time.Now().After(credential.ExpiresAt) {
+			return fmt.Errorf("вход paas-cli в %s истёк — продлите его любой командой CLI (например, `paas-cli organizations current`)", path)
+		}
+		cfg.AccessToken = credential.Token
+	case "personal_token":
 		cfg.Token = credential.Token
-	} else {
+	default:
 		cfg.SessionToken = credential.Token
 	}
 	return nil
@@ -144,10 +164,67 @@ func (e *RefusedError) Error() string {
 type Client struct {
 	cfg  Config
 	http *http.Client
+
+	mu        sync.Mutex
+	jwt       string
+	jwtExpiry time.Time
 }
 
 func New(cfg Config) *Client {
 	return &Client{cfg: cfg, http: &http.Client{Timeout: cfg.Timeout}}
+}
+
+// machineToken разбирает токен платформы вида `<id клиента>.<секрет>`; false —
+// секрет прежнего вида, его предъявляем как есть.
+func machineToken(token string) (clientID, secret string, ok bool) {
+	clientID, secret, ok = strings.Cut(token, ".")
+	return clientID, secret, ok && clientID != "" && secret != ""
+}
+
+// bearer отдаёт JWT для токена платформы, обменивая его заранее до истечения.
+func (c *Client) bearer(ctx context.Context) (string, error) {
+	clientID, secret, ok := machineToken(c.cfg.Token)
+	if !ok {
+		return c.cfg.Token, nil
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.jwt != "" && time.Now().Before(c.jwtExpiry) {
+		return c.jwt, nil
+	}
+
+	address := c.cfg.OAuthURL + "/oauth2/token"
+	form := url.Values{"grant_type": {"client_credentials"}}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, address, strings.NewReader(form.Encode()))
+	if err != nil {
+		return "", fmt.Errorf("запрос токена: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+	req.SetBasicAuth(url.QueryEscape(clientID), url.QueryEscape(secret))
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return "", &UnreachableError{Method: http.MethodPost, URL: address, Err: err}
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", &UnreachableError{Method: http.MethodPost, URL: address, Err: err}
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", &RefusedError{Method: http.MethodPost, URL: address, Status: resp.StatusCode, Body: string(raw)}
+	}
+	var tokens struct {
+		AccessToken string `json:"access_token"`
+		ExpiresIn   int64  `json:"expires_in"`
+	}
+	if err := json.Unmarshal(raw, &tokens); err != nil || tokens.AccessToken == "" {
+		return "", fmt.Errorf("сервер авторизации не вернул токен доступа: %s", raw)
+	}
+	c.jwt = tokens.AccessToken
+	// Запас в минуту, чтобы токен не истёк посреди запроса.
+	c.jwtExpiry = time.Now().Add(time.Duration(tokens.ExpiresIn)*time.Second - time.Minute)
+	return c.jwt, nil
 }
 
 func (c *Client) Config() Config { return c.cfg }
@@ -235,10 +312,21 @@ func (c *Client) request(ctx context.Context, method, rawURL string, auth bool, 
 		return nil, fmt.Errorf("запрос %s %s: %w", method, rawURL, err)
 	}
 	req.Header.Set("Accept", "application/json")
+	if !auth {
+		return req, nil
+	}
+	if c.cfg.OrganizationID != "" {
+		req.Header.Set("X-Organization-Id", c.cfg.OrganizationID)
+	}
 	switch {
-	case !auth:
 	case c.cfg.Token != "":
-		req.Header.Set("Authorization", "Bearer "+c.cfg.Token)
+		token, err := c.bearer(ctx)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+	case c.cfg.AccessToken != "":
+		req.Header.Set("Authorization", "Bearer "+c.cfg.AccessToken)
 	default:
 		req.Header.Set("X-Session-Token", c.cfg.SessionToken)
 	}

@@ -8,6 +8,25 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
+  pull_request:
+  # Гейт выкатки: CI сервиса платформы зовёт набор после выкатки и при красном
+  # откатывает её (README, «Гейт выкатки»).
+  workflow_call:
+    inputs:
+      suite:
+        description: 'full — весь набор; gate — только сценарии самой платформы'
+        type: string
+        default: full
+      organization_id:
+        description: 'организация, от имени которой ходят проверки (X-Organization-Id)'
+        type: string
+        default: ''
+    secrets:
+      PAAS_API_TOKEN:
+        required: true
+      # paas-e2e приватный: токеном запуска вызывающего репо его не вычекаутить.
+      E2E_REPO_TOKEN:
+        required: true
 
 jobs:
   check:
@@ -16,12 +35,28 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
+        with:
+          repository: TraumTech/paas-e2e
+          # При вызове из другого репо берём набор с main, а не ревизию вызывающего.
+          ref: ${{ github.repository != 'TraumTech/paas-e2e' && 'main' || '' }}
+          token: ${{ secrets.E2E_REPO_TOKEN || github.token }}
       - uses: actions/setup-go@v6
         with:
           go-version: stable
-      - run: go vet ./...
+      - run: go vet ./... && go vet -tags cluster ./...
+      # Гейт не включает здоровье выкаченных приложений и связь с кластерами
+      # приложений: их поломка — не повод откатывать платформу.
+      - name: Выбрать сценарии
+        id: suite
+        run: |
+          if [ "${{ inputs.suite }}" = gate ]; then
+            echo 'run=^Test(PublicEntrypointsAnswer|RequestWithoutTokenRefused|OrganizationVisible|ProductsListed|ServicesListed|ServiceVersionsReadable|PublishedProtocolsCompatibleWithThemselves)$' >> "$GITHUB_OUTPUT"
+          else
+            echo 'run=.' >> "$GITHUB_OUTPUT"
+          fi
       # Токен принадлежит проверкам, а не сервису: отзыв не задевает выкатки.
       - name: Сквозные проверки платформы
         env:
           PAAS_API_TOKEN: ${{ secrets.PAAS_API_TOKEN }}
-        run: go test -v -timeout 12m ./...
+          PAAS_ORGANIZATION_ID: ${{ inputs.organization_id || vars.PAAS_E2E_ORGANIZATION_ID }}
+        run: go test -v -timeout 12m -run '${{ steps.suite.outputs.run }}' ./...

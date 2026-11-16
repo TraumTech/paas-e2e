@@ -68,6 +68,8 @@ type Cluster struct {
 	Endpoint      string    `json:"endpoint"`
 	Connected     bool      `json:"connected"`
 	LastContactAt time.Time `json:"last_contact_at"`
+	// Shared — общий кластер платформы (TRA-489): адрес его организации не отдаётся.
+	Shared bool `json:"shared"`
 }
 
 type ClusterList struct {
