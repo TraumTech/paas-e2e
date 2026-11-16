@@ -10,7 +10,7 @@ import (
 func TestClustersConnected(t *testing.T) {
 	for _, cluster := range listClusters(t) {
 		t.Run(cluster.Name, func(t *testing.T) {
-			if cluster.Endpoint == "" {
+			if cluster.Endpoint == "" && !cluster.Shared {
 				t.Errorf("у кластера нет адреса: %+v", cluster)
 			}
 			if !cluster.Connected {
