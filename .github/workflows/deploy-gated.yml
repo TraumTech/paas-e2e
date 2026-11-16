@@ -1,0 +1,90 @@
+name: deploy-gated
+
+# Выкатка сборки сервиса платформы из его CI под гейтом (TRA-516): выкатить
+# сборку и дождаться готовности → сквозные проверки → при красном вернуть
+# версию, которая работала до выкатки. Зовётся после `paas-cli builds publish`.
+on:
+  workflow_call:
+    inputs:
+      service_id:
+        type: string
+        required: true
+      build_id:
+        type: string
+        required: true
+      revision:
+        description: 'ревизия коммита сборки — тег образа'
+        type: string
+        required: true
+      environment:
+        type: string
+        default: prod
+      organization_id:
+        type: string
+        default: ''
+    secrets:
+      PAAS_API_TOKEN:
+        required: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Две выкатки одного сервиса подряд не должны откатывать друг друга.
+    concurrency:
+      group: gated-deploy-${{ inputs.service_id }}-${{ inputs.environment }}
+      cancel-in-progress: false
+    outputs:
+      previous: ${{ steps.deploy.outputs.previous }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: TraumTech/paas-e2e
+          ref: main
+      - uses: actions/setup-go@v6
+        with:
+          go-version: stable
+      - name: Выкатить сборку и дождаться готовности
+        id: deploy
+        env:
+          PAAS_API_TOKEN: ${{ secrets.PAAS_API_TOKEN }}
+          PAAS_ORGANIZATION_ID: ${{ inputs.organization_id }}
+        run: |
+          go run ./cmd/gated-deploy deploy \
+            -service "${{ inputs.service_id }}" -environment "${{ inputs.environment }}" \
+            -build "${{ inputs.build_id }}" -revision "${{ inputs.revision }}" >> "$GITHUB_OUTPUT"
+
+  e2e:
+    needs: deploy
+    uses: TraumTech/paas-e2e/.github/workflows/e2e.yml@main
+    with:
+      suite: gate
+      organization_id: ${{ inputs.organization_id }}
+    secrets:
+      PAAS_API_TOKEN: ${{ secrets.PAAS_API_TOKEN }}
+
+  # Первая выкатка сервиса отката не имеет: возвращать нечего.
+  rollback:
+    needs: [deploy, e2e]
+    if: failure() && needs.deploy.outputs.previous != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: TraumTech/paas-e2e
+          ref: main
+      - uses: actions/setup-go@v6
+        with:
+          go-version: stable
+      - name: Вернуть версию, работавшую до выкатки
+        env:
+          PAAS_API_TOKEN: ${{ secrets.PAAS_API_TOKEN }}
+          PAAS_ORGANIZATION_ID: ${{ inputs.organization_id }}
+        run: |
+          go run ./cmd/gated-deploy rollback \
+            -service "${{ inputs.service_id }}" -environment "${{ inputs.environment }}" \
+            -version "${{ needs.deploy.outputs.previous }}"
+      - run: |
+          echo "::error::Сквозные проверки после выкатки красные — сервис возвращён на прежнюю версию"
+          exit 1

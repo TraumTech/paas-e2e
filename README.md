@@ -188,3 +188,25 @@ e2e:
 `suite: gate` — только сценарии самой платформы: здоровье выкаченных
 приложений и связь с кластерами приложений в гейт не входят — их поломка не
 повод откатывать платформу. Набор берётся с `main` этого репозитория.
+
+## Выкатка сервиса под гейтом
+
+Сервисы, которые катит сама платформа, выкатываются из своего CI
+переиспользуемым `.github/workflows/deploy-gated.yml` сразу после публикации
+сборки: `cmd/gated-deploy deploy` запоминает работающую версию, выкатывает
+сборку и ждёт, пока все экземпляры нового образа готовы; затем гейт (`suite:
+gate`); при красном `cmd/gated-deploy rollback` возвращает прежнюю версию.
+Выкатка — действие человека, поэтому токен — тот же токен проверок, а не
+токен CI (организационный секрет `PAAS_E2E_TOKEN`).
+
+```yaml
+deploy:
+  needs: publish
+  uses: TraumTech/paas-e2e/.github/workflows/deploy-gated.yml@main
+  with:
+    service_id: <идентификатор сервиса>
+    build_id: ${{ needs.publish.outputs.build_id }}
+    revision: ${{ github.sha }}
+  secrets:
+    PAAS_API_TOKEN: ${{ secrets.PAAS_E2E_TOKEN }}
+```
